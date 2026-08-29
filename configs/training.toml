@@ -1,0 +1,19 @@
+[training]
+random_seed = 42
+test_size = 0.20
+validation_size = 0.20
+decision_threshold = 0.35
+late_night_start_hour = 0
+late_night_end_hour = 5
+
+[text_model]
+max_features = 5000
+ngram_max = 2
+max_iter = 1000
+
+[fraud_model]
+n_estimators = 80
+max_depth = 3
+learning_rate = 0.08
+subsample = 0.9
+colsample_bytree = 0.9
