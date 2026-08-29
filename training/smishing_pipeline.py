@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "reports"
 REQUIRED_COLUMNS = {"text", "send_hour", "has_url", "has_phone_num", "char_len", "category", "label"}
 NUMERIC_COLUMNS = ["send_hour", "has_url", "has_phone_num", "char_len"]
+OPTIONAL_NUMERIC_COLUMNS = ["has_urgent_word"]
 
 
 def load_smishing_records(path: Path) -> pd.DataFrame:
@@ -46,7 +47,7 @@ def load_smishing_records(path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Smishing dataset missing columns: {sorted(missing)}")
     frame = frame[list(REQUIRED_COLUMNS)].copy()
-    for column in NUMERIC_COLUMNS + ["label"]:
+    for column in [*NUMERIC_COLUMNS, *[name for name in OPTIONAL_NUMERIC_COLUMNS if name in frame], "label"]:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
     valid = (
         frame["text"].notna() & frame["category"].notna()
@@ -54,6 +55,9 @@ def load_smishing_records(path: Path) -> pd.DataFrame:
         & frame["has_url"].isin([0, 1]) & frame["has_phone_num"].isin([0, 1])
         & frame["char_len"].ge(0) & frame["label"].isin([0, 1])
     )
+    for column in OPTIONAL_NUMERIC_COLUMNS:
+        if column in frame:
+            valid &= frame[column].isin([0, 1])
     data = frame.loc[valid].copy()
     if len(data) != len(frame):
         raise ValueError(f"Rejected {len(frame) - len(data)} invalid smishing records")
@@ -64,12 +68,13 @@ def load_smishing_records(path: Path) -> pd.DataFrame:
     return data.drop_duplicates(subset=["text", "label"]).reset_index(drop=True)
 
 
-def build_smishing_model(random_seed: int = 42) -> Pipeline:
+def build_smishing_model(random_seed: int = 42, numeric_columns: list[str] | None = None) -> Pipeline:
     """한국어 문자 문맥과 제공된 보조 feature를 함께 쓰는 경량 CPU 모델."""
+    active_numeric_columns = numeric_columns or NUMERIC_COLUMNS
     preprocess = ColumnTransformer([
         ("text", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), max_features=8_000, sublinear_tf=True), "text"),
         ("category", OneHotEncoder(handle_unknown="ignore"), ["category"]),
-        ("numeric", StandardScaler(with_mean=False), NUMERIC_COLUMNS),
+        ("numeric", StandardScaler(with_mean=False), active_numeric_columns),
     ])
     return Pipeline([
         ("features", preprocess),
@@ -100,7 +105,8 @@ def run_smishing_pipeline(dataset_path: Path, random_seed: int = 42) -> dict[str
     if len(data) < 20:
         raise ValueError("At least 20 validated records are required for train/test evaluation")
     train, test = train_test_split(data, test_size=0.2, stratify=data["label"], random_state=random_seed)
-    model = build_smishing_model(random_seed).fit(train, train["label"])
+    active_numeric_columns = [*NUMERIC_COLUMNS, *[name for name in OPTIONAL_NUMERIC_COLUMNS if name in data]]
+    model = build_smishing_model(random_seed, active_numeric_columns).fit(train, train["label"])
     metrics = _metrics(test["label"], model.predict_proba(test)[:, 1])
     version = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     CANDIDATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -110,7 +116,7 @@ def run_smishing_pipeline(dataset_path: Path, random_seed: int = 42) -> dict[str
     report_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     metadata = {
         "version": version, "status": "candidate", "model_type": "tfidf_char_ngram_logistic_regression",
-        "dataset_size": len(data), "features": ["text", *NUMERIC_COLUMNS, "category"],
+        "dataset_size": len(data), "features": ["text", *active_numeric_columns, "category"],
         "metrics": metrics, "source_file": dataset_path.name, "synthetic_demo": False,
         "note": "Text-only smishing candidate. It is not a transaction fraud production model.",
     }
