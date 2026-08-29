@@ -27,3 +27,5 @@ models/archived/*
 !models/candidates/.gitkeep
 !models/production/.gitkeep
 !models/archived/.gitkeep
+reports/*
+!reports/.gitkeep

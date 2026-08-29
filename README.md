@@ -39,6 +39,16 @@ Swagger: <http://127.0.0.1:8000/docs>
 
 `data/raw/`에 승인된 CSV가 있으면 pipeline이 이를 사용하고, 비어 있으면 `data/sample/sample_training.csv`로 동작을 검증합니다. raw/validated/processed/rejected와 model binary는 Git에서 제외됩니다.
 
+### 스미싱 JSON/JSONL 학습
+
+`text`, `send_hour`, `has_url`, `has_phone_num`, `char_len`, `category`, `label` 형식의 스미싱 데이터는 거래 모델과 섞지 않고 별도 경량 분류기로 학습합니다.
+
+```bash
+python3 -m training.smishing_pipeline data/raw/smishing_messages.jsonl
+```
+
+이 경로는 한국어 문자 문맥(char n-gram), URL·전화번호 존재 여부, 발송 시간, 분류 category를 사용합니다. 텍스트의 전화번호 등 식별자는 학습 전 마스킹됩니다. 생성 결과는 candidate일 뿐이며, 실제 송금 사기 production 모델로 자동 승격되지 않습니다.
+
 ## 자동 학습 Pipeline 및 평가
 
 `python3 -m training.pipeline`은 raw 읽기 → schema validation → rejected 분리 → 중복 제거 → 익명화 → feature engineering → case_id group 기반 train/validation/test split → Text Model 학습 → text 확률 생성 → Main Model 학습 → 평가 → candidate/metadata/report 저장을 수행합니다.
