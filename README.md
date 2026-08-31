@@ -47,6 +47,13 @@ Swagger: <http://127.0.0.1:8000/docs>
 python3 -m training.smishing_pipeline data/raw/smishing_messages.jsonl
 ```
 
+외부에서 미리 나눈 데이터는 순서를 보존해 학습합니다. `test`는 최종 평가에만 사용합니다.
+
+```bash
+python3 -m training.smishing_pipeline --train data/raw/train.jsonl --validation data/raw/validation.jsonl --test data/raw/test.jsonl
+python3 -m training.model_registry promote-smishing <version>
+```
+
 이 경로는 한국어 문자 문맥(char n-gram), URL·전화번호 존재 여부, 발송 시간, 분류 category를 사용합니다. 텍스트의 전화번호 등 식별자는 학습 전 마스킹됩니다. 생성 결과는 candidate일 뿐이며, 실제 송금 사기 production 모델로 자동 승격되지 않습니다.
 
 ## 자동 학습 Pipeline 및 평가
@@ -64,6 +71,18 @@ python3 -m training.model_registry promote <version>
 ```
 
 승격 후 `/analyze`는 `models/production/`의 모델을 이용합니다. 운영 모델이 없으면 `503 model_not_ready`를 반환합니다.
+
+스미싱 production 모델은 거래 사기 모델과 분리되어 `/analyze/smishing`에서 사용합니다. 요청 본문은 `text`, `send_hour`, 선택 `category`이며 URL·전화번호·긴급성·문자 길이는 원문에서 서버가 계산합니다.
+
+### 공주 LLM 챗봇
+
+`/chat/smishing`은 스미싱 확률을 먼저 로컬에서 계산하고, OpenAI `gpt-5-mini`가 그 판정과 안전 조치만 쉬운 한국어로 설명합니다. 원문 메시지와 개인정보는 LLM에 보내지 않습니다. API 키는 Git에 넣지 말고 실행 환경에만 설정합니다.
+
+```bash
+export OPENAI_API_KEY="your_api_key"
+python3 -m pip install -r requirements.txt
+python3 -m uvicorn app.main:app --reload
+```
 
 ```json
 {
@@ -86,4 +105,4 @@ python3 -m training.model_registry promote <version>
 
 sample CSV는 **synthetic demo**이며 pipeline·학습·추론 검증용입니다. 여기서 나온 성능 수치는 실제 금융사기 탐지 성능을 의미하지 않습니다. 실제 데이터 확보 후에는 label 품질 검토, 누수·중복 검사 강화, 시간 기반 검증, 불균형·threshold 재조정, 편향·드리프트 모니터링을 수행해야 합니다.
 
-Risk Engine의 0~100 점수화와 외부 LLM은 의도적으로 구현하지 않았습니다. 향후 Risk Engine은 `fraud_probability`와 근거를 사용하고, LLM은 그 결과를 고연령층 친화적인 설명·대응 방법으로만 바꿔야 합니다. XGBoost feature importance와 향후 SHAP 설명 가능 AI도 확장 예정입니다.
+Risk Engine의 0~100 점수화와 XGBoost feature importance·SHAP 설명 가능 AI는 향후 확장 예정입니다. 공주 LLM은 판정을 내리지 않고, 로컬 모델의 결과를 고연령층 친화적인 설명·대응 방법으로만 바꿉니다.

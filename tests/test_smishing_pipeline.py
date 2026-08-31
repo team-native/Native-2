@@ -1,6 +1,6 @@
 import json
 
-from training.smishing_pipeline import load_smishing_records, run_smishing_pipeline
+from training.smishing_pipeline import load_smishing_records, run_smishing_pipeline, run_smishing_split_pipeline
 
 
 def records() -> list[dict[str, object]]:
@@ -25,3 +25,15 @@ def test_smishing_pipeline_creates_candidate(tmp_path) -> None:
     result = run_smishing_pipeline(path)
     assert result["model_path"].endswith(".joblib")
     assert 0 <= result["metrics"]["recall"] <= 1
+
+
+def test_split_pipeline_preserves_external_test_set(tmp_path) -> None:
+    paths = [tmp_path / name for name in ("train.jsonl", "validation.jsonl", "test.jsonl")]
+    for path in paths:
+        path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records()), encoding="utf-8")
+    # Separate messages prevent overlap between externally supplied splits.
+    for offset, path in enumerate(paths):
+        items = [{**item, "text": f"{item['text']} split-{offset}"} for item in records()]
+        path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in items), encoding="utf-8")
+    result = run_smishing_split_pipeline(*paths)
+    assert result["metrics"]["confusion_matrix"].values()

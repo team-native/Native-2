@@ -24,8 +24,10 @@ data/rejected/*
 models/candidates/*
 models/production/*
 models/archived/*
+models/smishing/*
 !models/candidates/.gitkeep
 !models/production/.gitkeep
 !models/archived/.gitkeep
+!models/smishing/.gitkeep
 reports/*
 !reports/.gitkeep

@@ -46,7 +46,10 @@ def load_smishing_records(path: Path) -> pd.DataFrame:
     missing = REQUIRED_COLUMNS - set(frame.columns)
     if missing:
         raise ValueError(f"Smishing dataset missing columns: {sorted(missing)}")
-    frame = frame[list(REQUIRED_COLUMNS)].copy()
+    # Keep optional features too.  Selecting only REQUIRED_COLUMNS here would
+    # silently discard has_urgent_word before model construction.
+    columns = [*sorted(REQUIRED_COLUMNS), *[name for name in OPTIONAL_NUMERIC_COLUMNS if name in frame]]
+    frame = frame[columns].copy()
     for column in [*NUMERIC_COLUMNS, *[name for name in OPTIONAL_NUMERIC_COLUMNS if name in frame], "label"]:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
     valid = (
@@ -124,12 +127,74 @@ def run_smishing_pipeline(dataset_path: Path, random_seed: int = 42) -> dict[str
     return {"version": version, "model_path": str(model_path), "report_path": str(report_path), "metrics": metrics}
 
 
+def run_smishing_split_pipeline(train_path: Path, validation_path: Path, test_path: Path, random_seed: int = 42, model_name: str = "공주") -> dict[str, Any]:
+    """Train on an externally supplied split and report untouched validation/test results.
+
+    The final artifact is refit on train+validation only after the validation
+    check; the test split is never used to fit the model.
+    """
+    train = load_smishing_records(train_path)
+    validation = load_smishing_records(validation_path)
+    test = load_smishing_records(test_path)
+    for name, frame in (("train", train), ("validation", validation), ("test", test)):
+        if len(frame) < 2 or frame["label"].nunique() < 2:
+            raise ValueError(f"{name} split requires both label classes")
+    # Preserve the supplied split order while removing cross-split duplicates
+    # after PII masking.  Otherwise the same message can inflate evaluation.
+    def exclude_seen(frame: pd.DataFrame, seen: set[tuple[str, int]]) -> tuple[pd.DataFrame, int]:
+        keep = ~frame.apply(lambda row: (row["text"], row["label"]) in seen, axis=1)
+        result = frame.loc[keep].reset_index(drop=True)
+        return result, int((~keep).sum())
+    seen = set(zip(train["text"], train["label"]))
+    validation, validation_duplicates_removed = exclude_seen(validation, seen)
+    seen |= set(zip(validation["text"], validation["label"]))
+    test, test_duplicates_removed = exclude_seen(test, seen)
+    for name, frame in (("validation", validation), ("test", test)):
+        if frame["label"].nunique() < 2:
+            raise ValueError(f"{name} split has no both label classes after duplicate removal")
+    active_numeric_columns = [*NUMERIC_COLUMNS, *[name for name in OPTIONAL_NUMERIC_COLUMNS if name in train]]
+    validation_model = build_smishing_model(random_seed, active_numeric_columns).fit(train, train["label"])
+    validation_metrics = _metrics(validation["label"], validation_model.predict_proba(validation)[:, 1])
+    final_train = pd.concat([train, validation], ignore_index=True)
+    model = build_smishing_model(random_seed, active_numeric_columns).fit(final_train, final_train["label"])
+    test_metrics = _metrics(test["label"], model.predict_proba(test)[:, 1])
+    version = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    CANDIDATE_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = CANDIDATE_DIR / f"smishing_model_{version}.joblib"
+    joblib.dump(model, model_path)
+    report_path = REPORTS / f"smishing_model_{version}_metrics.json"
+    report_path.write_text(json.dumps({"validation": validation_metrics, "test": test_metrics}, ensure_ascii=False, indent=2), encoding="utf-8")
+    metadata = {
+        "version": version, "model_name": model_name, "status": "candidate", "model_type": "tfidf_char_ngram_logistic_regression",
+        "dataset_size": len(final_train), "split_sizes": {"train": len(train), "validation": len(validation), "test": len(test)},
+        "cross_split_duplicates_removed": {"validation": validation_duplicates_removed, "test": test_duplicates_removed},
+        "features": ["text", *active_numeric_columns, "category"], "metrics": test_metrics,
+        "validation_metrics": validation_metrics, "synthetic_demo": False,
+        "note": "Smishing-only classifier; it does not score transaction fraud.",
+    }
+    write_candidate_metadata(f"smishing_{version}", metadata)
+    return {"version": version, "model_path": str(model_path), "report_path": str(report_path), "validation_metrics": validation_metrics, "metrics": test_metrics}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a lightweight smishing classifier from JSON/JSONL")
-    parser.add_argument("dataset", type=Path, help="JSON or JSONL file with smishing records")
+    parser.add_argument("dataset", type=Path, nargs="?", help="JSON or JSONL file with smishing records")
+    parser.add_argument("--train", type=Path, help="Externally prepared training split")
+    parser.add_argument("--validation", type=Path, help="Externally prepared validation split")
+    parser.add_argument("--test", type=Path, help="Externally prepared test split")
+    parser.add_argument("--model-name", default="공주", help="Human-readable model name")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-    print(json.dumps(run_smishing_pipeline(args.dataset, args.seed), ensure_ascii=False))
+    split_paths = (args.train, args.validation, args.test)
+    if any(split_paths):
+        if not all(split_paths):
+            parser.error("--train, --validation, and --test must be supplied together")
+        result = run_smishing_split_pipeline(args.train, args.validation, args.test, args.seed, args.model_name)
+    elif args.dataset:
+        result = run_smishing_pipeline(args.dataset, args.seed)
+    else:
+        parser.error("a dataset or all three split paths are required")
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":

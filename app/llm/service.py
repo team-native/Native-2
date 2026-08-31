@@ -1,6 +1,21 @@
-"""향후 설명용 LLM service 계약."""
+"""OpenAI Responses API를 이용한 공주 설명 챗봇."""
+from __future__ import annotations
+
+import os
 
 from typing import Protocol
+
+from openai import OpenAI, OpenAIError
+
+from app.llm.prompt import build_explanation_prompt
+
+
+class LLMNotConfiguredError(RuntimeError):
+    pass
+
+
+class LLMServiceError(RuntimeError):
+    pass
 
 
 class ExplanationService(Protocol):
@@ -11,4 +26,26 @@ class ExplanationService(Protocol):
     """
 
     def explain(self, risk_result: dict[str, object]) -> str:
-        """TODO: 위험 수준, 이유, 권장 대응을 설명한다."""
+        """판정 결과를 사용자 친화적으로 설명한다."""
+
+
+class OpenAIExplanationService:
+    """Reads OPENAI_API_KEY only from the server environment."""
+    def __init__(self, client: OpenAI | None = None, model: str = "gpt-5-mini") -> None:
+        if client is None and not os.environ.get("OPENAI_API_KEY"):
+            raise LLMNotConfiguredError("OPENAI_API_KEY is not configured")
+        self.client = client or OpenAI()
+        self.model = model
+
+    def explain(self, risk_result: dict[str, object]) -> str:
+        try:
+            response = self.client.responses.create(
+                model=self.model,
+                instructions=build_explanation_prompt(risk_result),
+                input="모델 판정 결과를 설명하고 사용자가 지금 할 안전한 행동을 알려주세요.",
+                store=False,
+                max_output_tokens=300,
+            )
+        except OpenAIError as error:
+            raise LLMServiceError(str(error)) from error
+        return response.output_text.strip()
