@@ -1,0 +1,11 @@
+services:
+  gongju-api:
+    build: .
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
+    volumes:
+      # Production models are deliberately excluded from Git and mounted at runtime.
+      - ./models:/app/models:ro
+    restart: unless-stopped

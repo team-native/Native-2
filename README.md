@@ -35,6 +35,18 @@ python3 -m training.pipeline
 python3 -m uvicorn app.main:app --reload
 ```
 
+### 서버 배포 (Docker)
+
+서버에서 `.env.example`을 `.env`로 복사해 `OPENAI_API_KEY`를 설정하고, production 모델 디렉터리를 안전하게 전달한 후 실행합니다. 실제 모델과 API 키는 GitHub에 올리지 않습니다.
+
+```bash
+cp .env.example .env
+# .env에 OPENAI_API_KEY 설정
+docker compose up -d --build
+```
+
+배포 전 `models/smishing/production/model.joblib` 및 `metadata.json`이 서버의 동일 경로에 있어야 `/analyze/smishing`, `/chat/smishing`이 준비됩니다.
+
 Swagger: <http://127.0.0.1:8000/docs>
 
 `data/raw/`에 승인된 CSV가 있으면 pipeline이 이를 사용하고, 비어 있으면 `data/sample/sample_training.csv`로 동작을 검증합니다. raw/validated/processed/rejected와 model binary는 Git에서 제외됩니다.
