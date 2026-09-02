@@ -44,7 +44,8 @@ class OpenAIExplanationService:
                 instructions=build_explanation_prompt(risk_result),
                 input="모델 판정 결과를 설명하고 사용자가 지금 할 안전한 행동을 알려주세요.",
                 store=False,
-                max_output_tokens=300,
+                reasoning={"effort": "minimal"},
+                max_output_tokens=500,
             )
         except OpenAIError as error:
             raise LLMServiceError(str(error)) from error
